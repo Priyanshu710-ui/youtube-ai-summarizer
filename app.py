@@ -3,6 +3,7 @@ import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi
 from groq import Groq
 
+
 # =========================================================
 # PAGE CONFIG
 # =========================================================
@@ -14,12 +15,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
 # =========================================================
 # CONFIG
 # =========================================================
 
 MODEL = "llama-3.1-8b-instant"
 MAX_TRANSCRIPT_CHARS = 12000
+
 
 # =========================================================
 # CSS
@@ -128,8 +131,9 @@ header {
 </style>
 """, unsafe_allow_html=True)
 
+
 # =========================================================
-# API KEY
+# GROQ API KEY
 # =========================================================
 
 try:
@@ -137,11 +141,13 @@ try:
 except Exception:
     GROQ_API_KEY = None
 
+
 # =========================================================
-# FUNCTIONS
+# EXTRACT YOUTUBE VIDEO ID
 # =========================================================
 
 def extract_video_id(url):
+
     patterns = [
         r"(?:v=)([A-Za-z0-9_-]{11})",
         r"(?:youtu\.be/)([A-Za-z0-9_-]{11})",
@@ -150,6 +156,7 @@ def extract_video_id(url):
     ]
 
     for pattern in patterns:
+
         match = re.search(pattern, url)
 
         if match:
@@ -158,21 +165,90 @@ def extract_video_id(url):
     return None
 
 
+# =========================================================
+# GET TRANSCRIPT
+# =========================================================
+
+@st.cache_data(show_spinner=False)
 def get_transcript(video_id):
 
     api = YouTubeTranscriptApi()
 
-    transcript = api.fetch(video_id)
+    # First discover ALL available transcripts.
+    transcript_list = api.list(video_id)
 
-    text = " ".join(
-        snippet.text
-        for snippet in transcript
-    )
+    available = list(transcript_list)
+
+    if not available:
+        raise Exception(
+            "No transcripts are available for this YouTube video."
+        )
+
+    # -----------------------------------------------------
+    # Prefer manually created English transcript
+    # -----------------------------------------------------
+
+    selected = None
+
+    for transcript in available:
+
+        if (
+            transcript.language_code.startswith("en")
+            and not transcript.is_generated
+        ):
+            selected = transcript
+            break
+
+    # -----------------------------------------------------
+    # Otherwise prefer generated English transcript
+    # -----------------------------------------------------
+
+    if selected is None:
+
+        for transcript in available:
+
+            if transcript.language_code.startswith("en"):
+                selected = transcript
+                break
+
+    # -----------------------------------------------------
+    # Otherwise use ANY available transcript
+    # -----------------------------------------------------
+
+    if selected is None:
+        selected = available[0]
+
+    # -----------------------------------------------------
+    # Fetch selected transcript
+    # -----------------------------------------------------
+
+    fetched = selected.fetch()
+
+    text_parts = []
+
+    for snippet in fetched:
+
+        text = getattr(snippet, "text", "")
+
+        if text:
+            text_parts.append(text)
+
+    text = " ".join(text_parts)
+
+    # Clean excessive whitespace
+    text = re.sub(r"\s+", " ", text).strip()
 
     return text
 
 
+# =========================================================
+# GENERATE AI SUMMARY
+# =========================================================
+
 def generate_summary(transcript, style, language):
+
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY is not configured.")
 
     client = Groq(
         api_key=GROQ_API_KEY
@@ -182,36 +258,37 @@ def generate_summary(transcript, style, language):
 
     style_instructions = {
 
-        "Concise Summary":
-            """
-            Create a concise summary in 3-5 paragraphs.
-            Keep it simple and easy to understand.
-            """,
+        "Concise Summary": """
+Create a concise summary in 3-5 paragraphs.
+Keep it simple and easy to understand.
+Focus only on the most important information.
+""",
 
-        "Key Takeaways":
-            """
-            Extract 6-10 important key takeaways.
-            Use clear bullet points.
-            """,
+        "Key Takeaways": """
+Extract 6-10 important key takeaways.
+Use clear bullet points.
+Make each point useful and easy to understand.
+""",
 
-        "Detailed Breakdown":
-            """
-            Create a detailed breakdown of the video.
-            Use headings and bullet points.
-            Follow the order of topics in the video.
-            """,
+        "Detailed Breakdown": """
+Create a detailed breakdown of the video.
+Use headings and bullet points.
+Follow the order of topics in the video.
+Explain important ideas clearly.
+""",
 
-        "Study Notes":
-            """
-            Convert the video into clear study notes.
-            Include headings, important concepts,
-            definitions, examples and key points.
-            """
+        "Study Notes": """
+Convert the video into clear study notes.
+Include headings, important concepts,
+definitions, examples and key points.
+Make the notes easy to revise.
+"""
     }
 
     language_instruction = ""
 
     if language != "Auto":
+
         language_instruction = f"""
 Write the final answer in {language}.
 """
@@ -314,6 +391,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
 # =========================================================
 # TABS
 # =========================================================
@@ -326,6 +404,7 @@ youtube_tab, tiktok_tab, instagram_tab, files_tab = st.tabs(
         "📁 Files"
     ]
 )
+
 
 # =========================================================
 # YOUTUBE
@@ -378,7 +457,7 @@ with youtube_tab:
     if generate:
 
         # -------------------------------------------------
-        # CHECK API
+        # API CHECK
         # -------------------------------------------------
 
         if not GROQ_API_KEY:
@@ -393,7 +472,7 @@ with youtube_tab:
             )
 
         # -------------------------------------------------
-        # CHECK URL
+        # URL CHECK
         # -------------------------------------------------
 
         elif not url:
@@ -417,11 +496,11 @@ with youtube_tab:
                 try:
 
                     # =====================================
-                    # TRANSCRIPT
+                    # GET TRANSCRIPT
                     # =====================================
 
                     with st.spinner(
-                        "🎧 Fetching video transcript..."
+                        "🎧 Finding available transcript..."
                     ):
 
                         transcript = get_transcript(
@@ -431,7 +510,7 @@ with youtube_tab:
                     if not transcript.strip():
 
                         st.error(
-                            "❌ No transcript was found."
+                            "❌ The video has no usable transcript."
                         )
 
                     else:
@@ -477,9 +556,7 @@ with youtube_tab:
                                 unsafe_allow_html=True
                             )
 
-                            st.markdown(
-                                summary
-                            )
+                            st.markdown(summary)
 
                         # =================================
                         # TRANSCRIPT
@@ -489,43 +566,61 @@ with youtube_tab:
                             "📄 Show Full Transcript"
                         ):
 
-                            st.write(
-                                transcript
-                            )
+                            st.write(transcript)
 
                 except Exception as e:
 
                     error = str(e)
 
+                    error_lower = error.lower()
+
                     # -------------------------------------
                     # FRIENDLY ERRORS
                     # -------------------------------------
 
-                    if "TranscriptsDisabled" in error:
+                    if (
+                        "transcriptsdisabled" in error_lower
+                        or "transcripts are disabled" in error_lower
+                    ):
 
                         st.error(
-                            "❌ Transcripts are disabled "
-                            "for this video."
+                            "❌ Transcripts are disabled for this video."
                         )
 
-                    elif "NoTranscriptFound" in error:
+                    elif (
+                        "notranscriptfound" in error_lower
+                        or "no transcript" in error_lower
+                    ):
 
                         st.error(
-                            "❌ No transcript was found "
-                            "for this video."
+                            "❌ No transcript is available for this video."
                         )
 
-                    elif "Could not retrieve" in error:
+                    elif (
+                        "video unavailable" in error_lower
+                        or "videounavailable" in error_lower
+                    ):
 
                         st.error(
-                            "❌ YouTube did not provide "
-                            "an accessible transcript."
+                            "❌ This YouTube video is unavailable."
+                        )
+
+                    elif (
+                        "requestblocked" in error_lower
+                        or "ipblocked" in error_lower
+                        or "blocked" in error_lower
+                    ):
+
+                        st.error(
+                            "❌ YouTube temporarily blocked transcript "
+                            "access from the server. Please try another "
+                            "video or try again later."
                         )
 
                     else:
 
                         st.error(
-                            f"❌ Something went wrong: {error}"
+                            f"❌ Could not get the transcript: {error}"
                         )
 
 
