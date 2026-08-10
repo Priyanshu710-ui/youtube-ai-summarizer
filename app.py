@@ -169,14 +169,95 @@ def extract_video_id(url):
 
 
 def get_youtube_transcript(video_id):
-    transcript = YouTubeTranscriptApi.get_transcript(video_id)
+    """
+    Try YouTube's transcript first using the current youtube-transcript-api.
+    Returns text if an accessible transcript exists.
+    """
+    api = YouTubeTranscriptApi()
+    transcript = api.fetch(video_id)
 
-    text = " ".join(
+    return " ".join(
         snippet.text
         for snippet in transcript
     )
 
-    return text
+
+def download_youtube_audio(url):
+    """
+    Download a relatively small audio-only version of a YouTube video.
+    The file is sent directly to Groq Whisper, so ffmpeg is not required.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="ai_youtube_")
+    output_template = os.path.join(temp_dir, "audio.%(ext)s")
+
+    options = {
+        "outtmpl": output_template,
+        "format": (
+            "bestaudio[ext=m4a][abr<=64]/"
+            "bestaudio[ext=webm][abr<=64]/"
+            "worstaudio[ext=m4a]/"
+            "worstaudio[ext=webm]"
+        ),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "restrictfilenames": True,
+        "max_filesize": MAX_AUDIO_BYTES,
+    }
+
+    with yt_dlp.YoutubeDL(options) as ydl:
+        ydl.extract_info(url, download=True)
+
+    candidates = [
+        os.path.join(temp_dir, name)
+        for name in os.listdir(temp_dir)
+        if os.path.isfile(os.path.join(temp_dir, name))
+    ]
+
+    if not candidates:
+        raise RuntimeError("YouTube audio could not be downloaded.")
+
+    downloaded = candidates[0]
+
+    if os.path.getsize(downloaded) > MAX_AUDIO_BYTES:
+        raise RuntimeError(
+            "The downloaded audio is larger than Groq's 25 MB limit. "
+            "Try a shorter video."
+        )
+
+    return downloaded
+
+
+def transcribe_audio_with_groq(file_path, language="Auto"):
+    """
+    Transcribe downloaded audio using Groq Whisper.
+    """
+    client = get_groq_client()
+
+    kwargs = {
+        "file": open(file_path, "rb"),
+        "model": WHISPER_MODEL,
+        "response_format": "json",
+        "temperature": 0.0,
+    }
+
+    try:
+        if language != "Auto":
+            language_codes = {
+                "English": "en",
+                "Hindi": "hi",
+                "Spanish": "es",
+                "French": "fr",
+                "German": "de",
+            }
+
+            if language in language_codes:
+                kwargs["language"] = language_codes[language]
+
+        result = client.audio.transcriptions.create(**kwargs)
+        return result.text
+    finally:
+        kwargs["file"].close()
 
 
 def generate_summary(text, style, language, source_name="video"):
@@ -526,12 +607,35 @@ with youtube_tab:
                 st.error("❌ Invalid YouTube URL.")
 
             else:
-                try:
-                    with st.spinner("🎧 Fetching video transcript..."):
-                        transcript = get_youtube_transcript(video_id)
+                temp_file = None
 
-                    if not transcript.strip():
-                        st.error("❌ No transcript was found.")
+                try:
+                    # First try the YouTube transcript.
+                    transcript = None
+
+                    try:
+                        with st.spinner("📝 Fetching YouTube transcript..."):
+                            transcript = get_youtube_transcript(video_id)
+                    except (TranscriptsDisabled, NoTranscriptFound):
+                        transcript = None
+                    except Exception:
+                        transcript = None
+
+                    # If YouTube has no accessible transcript, download audio
+                    # and use Groq Whisper instead.
+                    if not transcript or not transcript.strip():
+                        with st.spinner(
+                            "🎧 YouTube transcript unavailable. "
+                            "Getting audio and transcribing with AI..."
+                        ):
+                            temp_file = download_youtube_audio(url)
+                            transcript = transcribe_audio_with_groq(
+                                temp_file,
+                                language,
+                            )
+
+                    if not transcript or not transcript.strip():
+                        st.error("❌ No speech could be extracted from this video.")
 
                     else:
                         with st.spinner(
@@ -563,27 +667,22 @@ with youtube_tab:
                         with st.expander("📄 Show Full Transcript"):
                             st.write(transcript)
 
-                except TranscriptsDisabled:
-                    st.error(
-                        "❌ Transcripts are disabled for this video."
-                    )
-
-                except NoTranscriptFound:
-                    st.error(
-                        "❌ No transcript was found for this video."
-                    )
-
                 except Exception as e:
-                    error = str(e)
+                    st.error(f"❌ Could not process this YouTube video: {e}")
+                    st.info(
+                        "If this video is public but very long, restricted, "
+                        "or larger than Groq's 25 MB audio limit, try a shorter video."
+                    )
 
-                    if "Could not retrieve" in error:
-                        st.error(
-                            "❌ YouTube did not provide an accessible transcript."
-                        )
-                    else:
-                        st.error(
-                            f"❌ Something went wrong: {error}"
-                        )
+                finally:
+                    if temp_file and os.path.exists(temp_file):
+                        try:
+                            os.remove(temp_file)
+                            parent = os.path.dirname(temp_file)
+                            if os.path.isdir(parent) and not os.listdir(parent):
+                                os.rmdir(parent)
+                        except Exception:
+                            pass
 
 
 # =========================================================
