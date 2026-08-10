@@ -3,9 +3,9 @@ import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi
 from groq import Groq
 
-# ---------------------------------------------------------
+# =========================================================
 # PAGE CONFIG
-# ---------------------------------------------------------
+# =========================================================
 
 st.set_page_config(
     page_title="AI YouTube Summarizer",
@@ -14,16 +14,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------------------------
+# =========================================================
 # CONFIG
-# ---------------------------------------------------------
+# =========================================================
 
-LLM_MODEL = "llama-3.1-8b-instant"
+MODEL = "llama-3.1-8b-instant"
 MAX_TRANSCRIPT_CHARS = 12000
 
-# ---------------------------------------------------------
-# CUSTOM CSS
-# ---------------------------------------------------------
+# =========================================================
+# CSS
+# =========================================================
 
 st.markdown("""
 <style>
@@ -41,22 +41,18 @@ header {
 }
 
 .block-container {
+    max-width: 1250px;
     padding-top: 2rem;
     padding-bottom: 3rem;
-    max-width: 1250px;
 }
 
-/* Sidebar */
+/* SIDEBAR */
 
 [data-testid="stSidebar"] {
     background-color: #f5f7fb;
 }
 
-[data-testid="stSidebar"] h1 {
-    color: #111827;
-}
-
-/* Main heading */
+/* HERO */
 
 .hero-title {
     text-align: center;
@@ -75,44 +71,28 @@ header {
     margin-bottom: 45px;
 }
 
-/* Tabs */
-
-.tab-title {
-    font-size: 18px;
-    font-weight: 600;
-    padding-bottom: 12px;
-    border-bottom: 3px solid #ff4b4b;
-    display: inline-block;
-}
-
-/* Labels */
-
-label {
-    font-weight: 600 !important;
-}
-
-/* Button */
+/* BUTTON */
 
 .stButton > button {
     width: 100%;
     height: 58px;
     border-radius: 12px;
     border: none;
-    background: #ff4b4b;
+    background-color: #ff4b4b;
     color: white;
     font-size: 20px;
     font-weight: 600;
 }
 
 .stButton > button:hover {
-    background: #e63e3e;
+    background-color: #e63e3e;
     color: white;
 }
 
-/* Summary */
+/* SUMMARY */
 
 .summary-box {
-    background: #ffffff;
+    background: white;
     border: 1px solid #e5e7eb;
     border-radius: 18px;
     padding: 30px;
@@ -127,24 +107,14 @@ label {
     margin-bottom: 20px;
 }
 
-/* Info box */
-
-.info-box {
-    background: #e8f3ff;
-    border-radius: 12px;
-    padding: 18px;
-    color: #1f2937;
-    font-size: 17px;
-}
-
-/* Feature cards */
+/* FEATURE CARDS */
 
 .feature-card {
     background: #f8fafc;
     border: 1px solid #e5e7eb;
     border-radius: 15px;
     padding: 20px;
-    height: 100%;
+    min-height: 150px;
 }
 
 .feature-card h3 {
@@ -158,16 +128,25 @@ label {
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
+# =========================================================
+# API KEY
+# =========================================================
+
+try:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+except Exception:
+    GROQ_API_KEY = None
+
+# =========================================================
 # FUNCTIONS
-# ---------------------------------------------------------
+# =========================================================
 
 def extract_video_id(url):
     patterns = [
         r"(?:v=)([A-Za-z0-9_-]{11})",
         r"(?:youtu\.be/)([A-Za-z0-9_-]{11})",
         r"(?:youtube\.com/shorts/)([A-Za-z0-9_-]{11})",
-        r"(?:youtube\.com/embed/)([A-Za-z0-9_-]{11})",
+        r"(?:youtube\.com/embed/)([A-Za-z0-9_-]{11})"
     ]
 
     for pattern in patterns:
@@ -181,7 +160,6 @@ def extract_video_id(url):
 
 def get_transcript(video_id):
 
-    # Current youtube-transcript-api
     api = YouTubeTranscriptApi()
 
     transcript = api.fetch(video_id)
@@ -194,24 +172,41 @@ def get_transcript(video_id):
     return text
 
 
-def summarize(transcript, api_key, style, language):
+def generate_summary(transcript, style, language):
 
-    client = Groq(api_key=api_key)
+    client = Groq(
+        api_key=GROQ_API_KEY
+    )
 
     transcript = transcript[:MAX_TRANSCRIPT_CHARS]
 
-    styles = {
+    style_instructions = {
+
         "Concise Summary":
-            "Create a concise and easy-to-read summary in 3-5 paragraphs.",
+            """
+            Create a concise summary in 3-5 paragraphs.
+            Keep it simple and easy to understand.
+            """,
 
         "Key Takeaways":
-            "Create 6-10 important key takeaways using bullet points.",
+            """
+            Extract 6-10 important key takeaways.
+            Use clear bullet points.
+            """,
 
         "Detailed Breakdown":
-            "Create a detailed breakdown of the video with headings and bullet points.",
+            """
+            Create a detailed breakdown of the video.
+            Use headings and bullet points.
+            Follow the order of topics in the video.
+            """,
 
         "Study Notes":
-            "Convert the video into clear study notes with headings, definitions, important points and examples."
+            """
+            Convert the video into clear study notes.
+            Include headings, important concepts,
+            definitions, examples and key points.
+            """
     }
 
     language_instruction = ""
@@ -224,27 +219,29 @@ Write the final answer in {language}.
     prompt = f"""
 You are an expert YouTube video summarizer.
 
-{styles[style]}
+{style_instructions[style]}
 
 {language_instruction}
 
-Rules:
-- Use ONLY information contained in the transcript.
-- Do not invent facts.
-- Make the answer easy to read.
-- Use Markdown headings and bullet points where appropriate.
-- Focus on useful information.
-- Remove unnecessary repetition.
+IMPORTANT RULES:
 
-Transcript:
+1. Use ONLY information present in the transcript.
+2. Do not invent facts.
+3. Do not add information that is not in the transcript.
+4. Make the answer easy to understand.
+5. Use Markdown headings and bullet points.
+6. Remove unnecessary repetition.
+7. Focus on the most useful information.
+
+VIDEO TRANSCRIPT:
 
 {transcript}
 
-Summary:
+FINAL SUMMARY:
 """
 
     response = client.chat.completions.create(
-        model=LLM_MODEL,
+        model=MODEL,
         messages=[
             {
                 "role": "user",
@@ -258,9 +255,9 @@ Summary:
     return response.choices[0].message.content
 
 
-# ---------------------------------------------------------
+# =========================================================
 # SIDEBAR
-# ---------------------------------------------------------
+# =========================================================
 
 with st.sidebar:
 
@@ -293,22 +290,9 @@ with st.sidebar:
     )
 
 
-# ---------------------------------------------------------
-# GET API KEY FROM STREAMLIT SECRETS
-# ---------------------------------------------------------
-
-try:
-
-    api_key = st.secrets["GROQ_API_KEY"]
-
-except Exception:
-
-    api_key = None
-
-
-# ---------------------------------------------------------
+# =========================================================
 # HERO
-# ---------------------------------------------------------
+# =========================================================
 
 st.markdown(
     """
@@ -330,40 +314,31 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# =========================================================
+# TABS
+# =========================================================
 
-# ---------------------------------------------------------
-# SOURCE TABS
-# ---------------------------------------------------------
+youtube_tab, tiktok_tab, instagram_tab, files_tab = st.tabs(
+    [
+        "▶ YouTube Video",
+        "♪ TikTok Video",
+        "◎ Instagram Video",
+        "📁 Files"
+    ]
+)
 
-tabs = st.tabs([
-    "▶ YouTube Video",
-    "♪ TikTok Video",
-    "◎ Instagram Video",
-    "📁 Files"
-])
+# =========================================================
+# YOUTUBE
+# =========================================================
 
-with tabs[0]:
+with youtube_tab:
 
-    st.markdown(
-        '<div class="tab-title">YouTube Video</div>',
-        unsafe_allow_html=True
-    )
-
-    st.write("")
-
-    # -----------------------------------------------------
-    # URL
-    # -----------------------------------------------------
+    st.markdown("## YouTube Video")
 
     url = st.text_input(
         "YouTube Video URL",
-        placeholder="Paste the YouTube video link here...",
-        label_visibility="visible"
+        placeholder="https://www.youtube.com/watch?v=..."
     )
-
-    # -----------------------------------------------------
-    # OPTIONS
-    # -----------------------------------------------------
 
     col1, col2 = st.columns(2)
 
@@ -395,10 +370,6 @@ with tabs[0]:
 
     st.write("")
 
-    # -----------------------------------------------------
-    # GENERATE
-    # -----------------------------------------------------
-
     generate = st.button(
         "✨ Generate AI Summary",
         type="primary"
@@ -406,17 +377,29 @@ with tabs[0]:
 
     if generate:
 
-        if not url:
+        # -------------------------------------------------
+        # CHECK API
+        # -------------------------------------------------
+
+        if not GROQ_API_KEY:
+
+            st.error(
+                "❌ GROQ_API_KEY is not configured."
+            )
+
+            st.info(
+                "Add GROQ_API_KEY in Streamlit Cloud → "
+                "Manage app → Settings → Secrets."
+            )
+
+        # -------------------------------------------------
+        # CHECK URL
+        # -------------------------------------------------
+
+        elif not url:
 
             st.warning(
                 "Please paste a YouTube video URL first."
-            )
-
-        elif not api_key:
-
-            st.error(
-                "AI configuration is missing. "
-                "Please configure GROQ_API_KEY in Streamlit Secrets."
             )
 
         else:
@@ -426,17 +409,16 @@ with tabs[0]:
             if not video_id:
 
                 st.error(
-                    "Invalid YouTube URL. "
-                    "Please enter a valid YouTube video link."
+                    "❌ Invalid YouTube URL."
                 )
 
             else:
 
                 try:
 
-                    # -----------------------------------------
+                    # =====================================
                     # TRANSCRIPT
-                    # -----------------------------------------
+                    # =====================================
 
                     with st.spinner(
                         "🎧 Fetching video transcript..."
@@ -449,22 +431,21 @@ with tabs[0]:
                     if not transcript.strip():
 
                         st.error(
-                            "No transcript text was found for this video."
+                            "❌ No transcript was found."
                         )
 
                     else:
 
-                        # -------------------------------------
+                        # =================================
                         # AI SUMMARY
-                        # -------------------------------------
+                        # =================================
 
                         with st.spinner(
                             "🤖 AI is generating your summary..."
                         ):
 
-                            summary = summarize(
+                            summary = generate_summary(
                                 transcript,
-                                api_key,
                                 style,
                                 language
                             )
@@ -473,9 +454,9 @@ with tabs[0]:
                             "✓ Summary generated successfully!"
                         )
 
-                        # -------------------------------------
+                        # =================================
                         # RESULT
-                        # -------------------------------------
+                        # =================================
 
                         video_col, summary_col = st.columns(
                             [1, 2]
@@ -483,9 +464,7 @@ with tabs[0]:
 
                         with video_col:
 
-                            st.video(
-                                url
-                            )
+                            st.video(url)
 
                         with summary_col:
 
@@ -502,9 +481,9 @@ with tabs[0]:
                                 summary
                             )
 
-                        # -------------------------------------
+                        # =================================
                         # TRANSCRIPT
-                        # -------------------------------------
+                        # =================================
 
                         with st.expander(
                             "📄 Show Full Transcript"
@@ -516,69 +495,76 @@ with tabs[0]:
 
                 except Exception as e:
 
-                    error_text = str(e)
+                    error = str(e)
 
-                    if (
-                        "TranscriptsDisabled"
-                        in error_text
-                    ):
+                    # -------------------------------------
+                    # FRIENDLY ERRORS
+                    # -------------------------------------
+
+                    if "TranscriptsDisabled" in error:
 
                         st.error(
                             "❌ Transcripts are disabled "
                             "for this video."
                         )
 
-                    elif (
-                        "NoTranscriptFound"
-                        in error_text
-                    ):
+                    elif "NoTranscriptFound" in error:
 
                         st.error(
                             "❌ No transcript was found "
                             "for this video."
                         )
 
-                    elif (
-                        "Could not retrieve a transcript"
-                        in error_text
-                    ):
+                    elif "Could not retrieve" in error:
 
                         st.error(
                             "❌ YouTube did not provide "
-                            "a transcript for this video."
+                            "an accessible transcript."
                         )
 
                     else:
 
                         st.error(
-                            f"❌ Something went wrong: {error_text}"
+                            f"❌ Something went wrong: {error}"
                         )
 
 
-with tabs[1]:
+# =========================================================
+# TIKTOK
+# =========================================================
+
+with tiktok_tab:
 
     st.info(
-        "TikTok summarization is coming soon."
+        "♪ TikTok summarization is coming soon."
     )
 
 
-with tabs[2]:
+# =========================================================
+# INSTAGRAM
+# =========================================================
+
+with instagram_tab:
 
     st.info(
-        "Instagram summarization is coming soon."
+        "◎ Instagram summarization is coming soon."
     )
 
 
-with tabs[3]:
+# =========================================================
+# FILES
+# =========================================================
+
+with files_tab:
 
     st.info(
-        "File summarization is coming soon."
+        "📁 File summarization is coming soon."
     )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # FEATURES
-# ---------------------------------------------------------
+# =========================================================
 
 st.markdown("---")
 
@@ -586,9 +572,9 @@ st.markdown(
     "### ✨ Why use AI Video Summarizer?"
 )
 
-f1, f2, f3 = st.columns(3)
+col1, col2, col3 = st.columns(3)
 
-with f1:
+with col1:
 
     st.markdown(
         """
@@ -603,7 +589,7 @@ with f1:
         unsafe_allow_html=True
     )
 
-with f2:
+with col2:
 
     st.markdown(
         """
@@ -611,22 +597,22 @@ with f2:
         <h3>🧠 AI Powered</h3>
         <p>
         Get concise summaries, key takeaways
-        and study notes.
+        and study notes automatically.
         </p>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-with f3:
+with col3:
 
     st.markdown(
         """
         <div class="feature-card">
-        <h3>🔒 Private API</h3>
+        <h3>🔒 Secure</h3>
         <p>
         Visitors don't need to enter an API key.
-        The AI key stays securely on the server.
+        Your Groq key stays in Streamlit Secrets.
         </p>
         </div>
         """,
