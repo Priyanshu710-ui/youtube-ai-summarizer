@@ -169,8 +169,7 @@ def extract_video_id(url):
 
 
 def get_youtube_transcript(video_id):
-    api = YouTubeTranscriptApi()
-    transcript = api.fetch(video_id)
+    transcript = YouTubeTranscriptApi.get_transcript(video_id)
 
     text = " ".join(
         snippet.text
